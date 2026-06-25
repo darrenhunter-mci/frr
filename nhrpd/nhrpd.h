@@ -421,6 +421,16 @@ void nhrp_multicast_foreach(struct interface *ifp, afi_t afi,
 			    void (*cb)(struct nhrp_multicast *, void *),
 			    void *ctx);
 void netlink_mcast_set_nflog_group(int nlgroup);
+/* Multicast OIL snoop and unicast redirect (traffic-indication) both read
+ * NFLOG, but the kernel only delivers to the FIRST NETLINK_NETFILTER socket a
+ * process opens (it gets portid==PID); a second auto-bound socket is never
+ * delivered to. So nhrpd uses ONE shared NFLOG socket bound to both groups and
+ * dispatches by res_id. netlink_nflog_group is the unicast (redirect) group;
+ * netlink_mcast_nflog_group is the multicast OIL group. */
+extern int netlink_nflog_group;
+extern int netlink_mcast_nflog_group;
+void nhrp_nflog_resync(void);
+void netlink_log_indication(struct nlmsghdr *msg, struct zbuf *zb);
 
 void nhrp_route_update_nhrp(const struct prefix *p, struct interface *ifp);
 void nhrp_route_announce(int add, enum nhrp_cache_type type,

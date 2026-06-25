@@ -25,9 +25,12 @@
 #include "netlink.h"
 #include "znl.h"
 
+/* The unicast (redirect / traffic-indication) NFLOG group. The actual NFLOG
+ * socket is shared with the multicast OIL snoop and owned by
+ * nhrp_multicast.c (nhrp_nflog_resync); see the comment there for why a single
+ * socket is required. netlink_log_indication() below is the per-packet handler
+ * the shared reader dispatches unicast-group packets to. */
 int netlink_nflog_group;
-static int netlink_log_fd = -1;
-static struct event *netlink_log_thread;
 
 void netlink_update_binding(struct interface *ifp, union sockunion *proto,
 			    union sockunion *nbma)
@@ -35,30 +38,7 @@ void netlink_update_binding(struct interface *ifp, union sockunion *proto,
 	nhrp_send_zebra_nbr(proto, nbma, ifp);
 }
 
-static void netlink_log_register(int fd, int group)
-{
-	struct nlmsghdr *n;
-	struct nfgenmsg *nf;
-	struct nfulnl_msg_config_cmd cmd;
-	struct zbuf *zb = zbuf_alloc(512);
-
-	n = znl_nlmsg_push(zb, (NFNL_SUBSYS_ULOG << 8) | NFULNL_MSG_CONFIG,
-			   NLM_F_REQUEST | NLM_F_ACK);
-	nf = znl_push(zb, sizeof(*nf));
-	*nf = (struct nfgenmsg){
-		.nfgen_family = AF_UNSPEC,
-		.version = NFNETLINK_V0,
-		.res_id = htons(group),
-	};
-	cmd.command = NFULNL_CFG_CMD_BIND;
-	znl_rta_push(zb, NFULA_CFG_CMD, &cmd, sizeof(cmd));
-	znl_nlmsg_complete(zb, n);
-
-	zbuf_send(zb, fd);
-	zbuf_free(zb);
-}
-
-static void netlink_log_indication(struct nlmsghdr *msg, struct zbuf *zb)
+void netlink_log_indication(struct nlmsghdr *msg, struct zbuf *zb)
 {
 	struct nfgenmsg *nf;
 	struct rtattr *rta;
@@ -100,49 +80,14 @@ static void netlink_log_indication(struct nlmsghdr *msg, struct zbuf *zb)
 	nhrp_peer_send_indication(ifp, htons(pkthdr->hw_protocol), &pktpl);
 }
 
-static void netlink_log_recv(struct event *t)
-{
-	uint8_t buf[ZNL_BUFFER_SIZE];
-	int fd = EVENT_FD(t);
-	struct zbuf payload, zb;
-	struct nlmsghdr *n;
-
-
-	zbuf_init(&zb, buf, sizeof(buf), 0);
-	while (zbuf_recv(&zb, fd) > 0) {
-		while ((n = znl_nlmsg_pull(&zb, &payload)) != NULL) {
-			debugf(NHRP_DEBUG_KERNEL,
-			       "Netlink-log: Received msg_type %u, msg_flags %u",
-			       n->nlmsg_type, n->nlmsg_flags);
-			switch (n->nlmsg_type) {
-			case (NFNL_SUBSYS_ULOG << 8) | NFULNL_MSG_PACKET:
-				netlink_log_indication(n, &payload);
-				break;
-			}
-		}
-	}
-
-	event_add_read(master, netlink_log_recv, 0, netlink_log_fd,
-		       &netlink_log_thread);
-}
-
 void netlink_set_nflog_group(int nlgroup)
 {
-	if (netlink_log_fd >= 0) {
-		event_cancel(&netlink_log_thread);
-		close(netlink_log_fd);
-		netlink_log_fd = -1;
-	}
 	netlink_nflog_group = nlgroup;
-	if (nlgroup) {
-		netlink_log_fd = znl_open(NETLINK_NETFILTER, 0);
-		if (netlink_log_fd < 0)
-			return;
-
-		netlink_log_register(netlink_log_fd, nlgroup);
-		event_add_read(master, netlink_log_recv, 0, netlink_log_fd,
-			       &netlink_log_thread);
-	}
+	/* Rebind the shared NFLOG socket (owned by nhrp_multicast.c) so the
+	 * redirect group is bound on the same portid==PID socket as the
+	 * multicast OIL group — a second, separately-opened socket would bind
+	 * fine but never receive packets from the kernel. */
+	nhrp_nflog_resync();
 }
 
 int nhrp_neighbor_operation(ZAPI_CALLBACK_ARGS)

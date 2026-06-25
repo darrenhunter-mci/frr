@@ -437,12 +437,29 @@ static void netlink_mcast_log_recv(struct event *t)
 	while (zbuf_recv(&zb, fd) > 0) {
 		while ((n = znl_nlmsg_pull(&zb, &payload)) != NULL) {
 			debugf(NHRP_DEBUG_COMMON,
-			       "Netlink-mcast-log: Received msg_type %u, msg_flags %u",
+			       "Netlink-log: Received msg_type %u, msg_flags %u",
 			       n->nlmsg_type, n->nlmsg_flags);
 			switch (n->nlmsg_type) {
-			case (NFNL_SUBSYS_ULOG << 8) | NFULNL_MSG_PACKET:
-				netlink_mcast_log_handler(n, &payload);
+			case (NFNL_SUBSYS_ULOG << 8) | NFULNL_MSG_PACKET: {
+				/* One shared NFLOG socket carries both groups;
+				 * dispatch by nfgenmsg.res_id. Peek it without
+				 * consuming (both handlers re-read the nfgenmsg).
+				 * Unicast redirect group -> traffic-indication;
+				 * everything else -> multicast OIL snoop. */
+				int group = 0;
+
+				if ((size_t)(payload.tail - payload.head)
+				    >= sizeof(struct nfgenmsg))
+					group = ntohs(((struct nfgenmsg *)
+							       payload.head)
+							      ->res_id);
+				if (netlink_nflog_group
+				    && group == netlink_nflog_group)
+					netlink_log_indication(n, &payload);
+				else
+					netlink_mcast_log_handler(n, &payload);
 				break;
+			}
 			}
 		}
 	}
@@ -474,26 +491,41 @@ static void netlink_mcast_log_register(int fd, int group)
 	zbuf_free(zb);
 }
 
-void netlink_mcast_set_nflog_group(int nlgroup)
+/* Re-open the single shared NFLOG socket and bind whatever groups are
+ * configured (multicast OIL and/or unicast redirect). Using ONE socket is
+ * mandatory: the kernel's nfnetlink_log only delivers to the first
+ * NETLINK_NETFILTER socket a process opens (it gets portid==PID); a second
+ * auto-bound socket binds OK but is never delivered to. Call this whenever
+ * either group changes. */
+void nhrp_nflog_resync(void)
 {
 	if (netlink_mcast_log_fd >= 0) {
 		event_cancel(&netlink_mcast_log_thread);
 		close(netlink_mcast_log_fd);
 		netlink_mcast_log_fd = -1;
-		debugf(NHRP_DEBUG_COMMON, "De-register nflog group");
+		debugf(NHRP_DEBUG_COMMON, "De-register nflog socket");
 	}
-	netlink_mcast_nflog_group = nlgroup;
-	if (nlgroup) {
-		netlink_mcast_log_fd = znl_open(NETLINK_NETFILTER, 0);
-		if (netlink_mcast_log_fd < 0)
-			return;
+	if (!netlink_mcast_nflog_group && !netlink_nflog_group)
+		return;
+	netlink_mcast_log_fd = znl_open(NETLINK_NETFILTER, 0);
+	if (netlink_mcast_log_fd < 0)
+		return;
+	if (netlink_mcast_nflog_group)
+		netlink_mcast_log_register(netlink_mcast_log_fd,
+					   netlink_mcast_nflog_group);
+	if (netlink_nflog_group)
+		netlink_mcast_log_register(netlink_mcast_log_fd,
+					   netlink_nflog_group);
+	event_add_read(master, netlink_mcast_log_recv, 0, netlink_mcast_log_fd,
+		       &netlink_mcast_log_thread);
+	debugf(NHRP_DEBUG_COMMON, "Register nflog socket: mcast=%d redirect=%d",
+	       netlink_mcast_nflog_group, netlink_nflog_group);
+}
 
-		netlink_mcast_log_register(netlink_mcast_log_fd, nlgroup);
-		event_add_read(master, netlink_mcast_log_recv, 0,
-			       netlink_mcast_log_fd, &netlink_mcast_log_thread);
-		debugf(NHRP_DEBUG_COMMON, "Register nflog group: %d",
-		       netlink_mcast_nflog_group);
-	}
+void netlink_mcast_set_nflog_group(int nlgroup)
+{
+	netlink_mcast_nflog_group = nlgroup;
+	nhrp_nflog_resync();
 }
 
 static int nhrp_multicast_free(struct interface *ifp,
