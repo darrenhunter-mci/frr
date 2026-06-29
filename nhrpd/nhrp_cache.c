@@ -240,7 +240,11 @@ static void nhrp_cache_update_route(struct nhrp_cache *c)
 					       &p->vc->remote.nbma);
 		}
 
-		nhrp_route_announce(1, c->cur.type, &pfx, c->ifp, NULL,
+		nhrp_route_announce(1, c->cur.type, &pfx, c->ifp,
+				    sockunion_family(&c->proto_nexthop)
+						    != AF_UNSPEC
+					    ? &c->proto_nexthop
+					    : NULL,
 				    c->cur.mtu);
 		if (c->cur.type >= NHRP_CACHE_DYNAMIC) {
 			nhrp_route_update_nhrp(&pfx, c->ifp);

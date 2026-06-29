@@ -223,6 +223,18 @@ struct nhrp_cache {
 	struct interface *ifp;
 	union sockunion remote_addr;
 
+	/*
+	 * Overlay protocol next-hop for a resolved off-NBMA host that sits
+	 * BEHIND another NHRP router (e.g. a LAN host reached via a peer
+	 * spoke's tunnel address). When set (family != AF_UNSPEC) the kernel
+	 * route for remote_addr is announced "via proto_nexthop" instead of
+	 * onlink, so a downstream RPF check (pimd) resolves the next-hop to the
+	 * peer's tunnel IP — which is a real PIM neighbor — rather than to the
+	 * off-NBMA host itself. AF_UNSPEC (the default) keeps the legacy onlink
+	 * behaviour for directly-bound peers.
+	 */
+	union sockunion proto_nexthop;
+
 	unsigned map : 1;
 	unsigned used : 1;
 	unsigned route_installed : 1;

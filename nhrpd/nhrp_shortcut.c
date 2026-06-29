@@ -340,6 +340,15 @@ static void nhrp_shortcut_recv_resolution_rep(struct nhrp_reqid *reqid,
 			if (c_dst) {
 				debugf(NHRP_DEBUG_COMMON,
 				       "Shortcut: cache found, update binding");
+				/*
+				 * dst_proto is an off-NBMA host sitting behind
+				 * the next-hop router "proto"; route to it VIA
+				 * that router's tunnel address rather than
+				 * onlink, so an RPF lookup resolves a real PIM
+				 * neighbor (the peer tunnel IP) instead of the
+				 * host itself. See struct nhrp_cache.proto_nexthop.
+				 */
+				c_dst->proto_nexthop = *proto;
 				nhrp_cache_update_binding(c_dst,
 						  NHRP_CACHE_DYNAMIC,
 						  holding_time,
