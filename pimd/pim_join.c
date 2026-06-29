@@ -612,8 +612,31 @@ static void pim_jp_groups_source_set_prune(struct list *sources)
 			 * decision to prune as SPT may end up on the
 			 * same IIF as RPF_interface(RP).
 			 */
-			if (child->rpf.source_nexthop.interface &&
-			    !pim_rpf_is_same(&upstream->rpf, &child->rpf)) {
+			struct interface *sgifp =
+				child->rpf.source_nexthop.interface;
+			bool rpf_diverged =
+				!pim_rpf_is_same(&upstream->rpf, &child->rpf);
+
+			/* On a multipoint NBMA interface (e.g. a DMVPN mGRE)
+			 * the SPT and the RPT can share the same interface yet
+			 * resolve to DIFFERENT upstream neighbors -- (*,G)
+			 * toward the hub/RP and (S,G) direct to the source
+			 * spoke. pim_rpf_is_same() only compares the interface,
+			 * so it reports "same" and the (S,G,rpt) prune is
+			 * suppressed, leaving the RP-tree copy flowing on top of
+			 * the direct SPT copy (duplicate delivery). When the
+			 * source's RPF interface is NBMA-enabled, treat a
+			 * differing RPF' neighbor as a genuine divergence so the
+			 * prune is sent toward the RP.
+			 */
+			if (!rpf_diverged && sgifp && sgifp->info &&
+			    ((struct pim_interface *)sgifp->info)
+				    ->pim_nbma_enable &&
+			    pim_addr_cmp(upstream->rpf.rpf_addr,
+					 child->rpf.rpf_addr) != 0)
+				rpf_diverged = true;
+
+			if (sgifp && rpf_diverged) {
 				PIM_UPSTREAM_FLAG_SET_SEND_SG_RPT_PRUNE(child->flags);
 				if (PIM_DEBUG_PIM_PACKETS)
 					zlog_debug("%s: SPT Bit and RPF'(%s) != RPF'(S,G): Add Prune (%s,rpt) to compound message",
