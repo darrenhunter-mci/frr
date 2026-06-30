@@ -438,6 +438,29 @@ void pim_nbma_send_state(struct interface *ifp)
 				  sizeof(state));
 }
 
+/* Ask nhrpd (via the zebra opaque bus) to resolve a multicast (S,G) source's
+ * NBMA so a spoke-to-spoke shortcut forms.  Fired from the RPF hook when the
+ * source is reached across an `ip pim nbma` tunnel and no shortcut exists yet.
+ * For MULTICAST-ONLY flows nothing else triggers NHRP resolution: the unicast
+ * path needs a data packet to drive the traffic-indication/redirect, but a
+ * pure multicast receiver never sends one toward the source.  nhrpd dedups
+ * (an in-flight/complete shortcut is a no-op), so re-firing is harmless.
+ */
+void pim_nbma_send_resolve(struct interface *ifp, struct in_addr src)
+{
+	struct pim_nbma_resolve_req req;
+
+	if (!pim_zclient || pim_zclient->sock < 0)
+		return;
+
+	memset(&req, 0, sizeof(req));
+	req.ifindex = ifp ? ifp->ifindex : 0;
+	req.src = src;
+
+	(void)zclient_send_opaque(pim_zclient, PIM_NBMA_RESOLVE_REQUEST, (const uint8_t *)&req,
+				  sizeof(req));
+}
+
 /* Re-broadcast PIM_NBMA_IF_STATE_UPDATE for every interface with a
  * pim_interface attached.  Called on REQUEST from nhrpd and on local
  * zebra reconnect so nhrpd can rebuild its mirror without requiring the

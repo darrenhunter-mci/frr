@@ -25,6 +25,7 @@
 #include "pim_time.h"
 #include "pim_nht.h"
 #include "pim_oil.h"
+#include "pim_zebra.h"
 #include "pim_mlag.h"
 
 static pim_addr pim_rpf_find_rpf_addr(struct pim_upstream *up);
@@ -117,6 +118,24 @@ enum pim_rpf_result pim_rpf_update(struct pim_instance *pim,
 	}
 
 	rpf->rpf_addr = pim_rpf_find_rpf_addr(up);
+
+#if PIM_IPV == 4
+	/* Multicast-only spoke-to-spoke bootstrap: when this (S,G)'s source
+	 * resolved to a path across an `ip pim nbma` tunnel (i.e. relayed via
+	 * the hub), ask nhrpd to resolve the source's NBMA so a real shortcut
+	 * forms and the SPT can switch to the direct path. A pure multicast
+	 * receiver never sends unicast toward the source, so the usual
+	 * traffic-indication/redirect trigger never fires; this is the only
+	 * thing that kicks resolution for a multicast-only flow. nhrpd dedups
+	 * in-flight/established shortcuts, so re-firing per RPF update is safe.
+	 */
+	if (!pim_addr_is_any(up->sg.src) && rpf->source_nexthop.interface) {
+		struct pim_interface *rpf_ifp = rpf->source_nexthop.interface->info;
+
+		if (rpf_ifp && rpf_ifp->pim_nbma_enable)
+			pim_nbma_send_resolve(rpf->source_nexthop.interface, up->sg.src);
+	}
+#endif /* PIM_IPV == 4 */
 
 	if (pim_rpf_addr_is_inaddr_any(rpf) && PIM_DEBUG_ZEBRA) {
 		/* RPF'(S,G) not found */

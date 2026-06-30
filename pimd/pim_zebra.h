@@ -36,4 +36,9 @@ void pim_zebra_interface_set_master(struct interface *vrf,
  * not up -- nhrpd refreshes via PIM_NBMA_IF_STATE_REQUEST on reconnect.
  */
 void pim_nbma_send_state(struct interface *ifp);
+
+/* pimd -> nhrpd: trigger NHRP resolution of a multicast (S,G) source so a
+ * spoke-to-spoke shortcut forms for a multicast-only flow. See pim_zebra.c.
+ */
+void pim_nbma_send_resolve(struct interface *ifp, struct in_addr src);
 #endif /* PIM_ZEBRA_H */
