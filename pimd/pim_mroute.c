@@ -1534,7 +1534,26 @@ static int pim_mroute_add(struct channel_oil *c_oil, const char *name)
 	 * in the case of a (*,G).
 	 */
 	if (pim_addr_is_any(*oil_origin(c_oil))) {
-		oil_if_set(tmp_oil, *oil_incoming_vif(c_oil), 1);
+		vifi_t iif = *oil_incoming_vif(c_oil);
+		struct interface *iif_ifp =
+			(iif < MAXVIFS)
+				? pim_if_find_by_vif_index(pim, iif)
+				: NULL;
+
+		/*
+		 * ...but never when the incoming vif is a loopback. On a PIM RP
+		 * the (*,G) RPF resolves to the loopback that carries the RP
+		 * address (10.10.10.10), so the incoming vif is lo. Putting lo
+		 * in the OIF list makes the kernel forward the packet out the
+		 * loopback; it immediately re-enters the multicast forwarder and
+		 * is forwarded again -- a loop bounded only by the IP TTL, which
+		 * duplicates every (*,G) packet up to TTL times. A loopback is
+		 * never a real forwarding target, so leave it out of the OIF
+		 * list (the real OIFs, e.g. the mGRE toward the spokes, are
+		 * unaffected).
+		 */
+		if (!iif_ifp || !if_is_loopback(iif_ifp))
+			oil_if_set(tmp_oil, iif, 1);
 	}
 
 	/*
