@@ -1088,8 +1088,28 @@ void pim_upstream_switch(struct pim_instance *pim, struct pim_upstream *up,
 				join_timer_start(up);
 			}
 		}
-		if (old_state != new_state)
+		if (old_state != new_state) {
 			pim_upstream_update_use_rpt(up, true /*update_mroute*/);
+			/*
+			 * If this (S,G) just switched onto the SPT (use_rpt
+			 * cleared) and it has a (*,G) parent that we are not the
+			 * RP for, re-send the parent (*,G) join immediately so
+			 * the (S,G,rpt) prune is carried to the RP at switchover
+			 * rather than waiting for the periodic (*,G) JoinTimer.
+			 * On a shared NBMA interface (DMVPN) that delay leaves
+			 * duplicate RP-tree traffic flowing for up to a join
+			 * interval. This mirrors the symmetric SPT->RPT re-join
+			 * below; pim_jp_groups_source_set_prune() decides whether
+			 * a prune is actually carried, so it is a harmless join
+			 * refresh when there is nothing to prune.
+			 */
+			if (!pim_addr_is_any(up->sg.src) &&
+			    !PIM_UPSTREAM_FLAG_TEST_USE_RPT(up->flags) &&
+			    up->parent && !I_am_RP(pim, up->sg.grp))
+				pim_jp_agg_single_upstream_send(
+					&up->parent->rpf, up->parent,
+					true /* (*,G) Join carrying SGrpt prune */);
+		}
 	} else {
 		bool old_use_rpt;
 		bool new_use_rpt;
