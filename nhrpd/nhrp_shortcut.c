@@ -323,6 +323,22 @@ static void nhrp_shortcut_recv_resolution_rep(struct nhrp_reqid *reqid,
 		if (c) {
 			debugf(NHRP_DEBUG_COMMON,
 			       "Shortcut: cache found, update binding");
+			/*
+			 * When the resolved protocol address is NOT the
+			 * responder itself (pp->src_proto), it is an off-NBMA
+			 * host sitting on the responder's LAN and the reply
+			 * carries proto == dst_proto (so the proto != dst_proto
+			 * c_dst path below never fires). Announce its /32 VIA
+			 * the responder's tunnel address rather than onlink, so
+			 * a downstream RPF lookup (pimd at the RP resolving a
+			 * multicast source) resolves a real PIM neighbor (the
+			 * peer tunnel IP) instead of the host itself — otherwise
+			 * the recursive/onlink /32 shadows the BGP route and the
+			 * (S,G) RPF returns Unknown. See nhrp_cache.proto_nexthop.
+			 */
+			if (sockunion_family(&pp->src_proto) != AF_UNSPEC
+			    && !sockunion_same(proto, &pp->src_proto))
+				c->proto_nexthop = pp->src_proto;
 			nhrp_cache_update_binding(c, NHRP_CACHE_DYNAMIC,
 						  holding_time,
 						  nhrp_peer_get(pp->ifp, nbma),
