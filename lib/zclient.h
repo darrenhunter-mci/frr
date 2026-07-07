@@ -1414,9 +1414,6 @@ enum zapi_opaque_registry {
 	PIM_NBMA_IF_STATE_UPDATE = 10,
 	/* Request current PIM NBMA-mode state from pimd (nhrpd -> pimd). */
 	PIM_NBMA_IF_STATE_REQUEST = 11,
-	/* Ask nhrpd to resolve an (S,G) source's NBMA so a spoke-to-spoke
-	 * shortcut forms for a multicast-only flow (pimd -> nhrpd). */
-	PIM_NBMA_RESOLVE_REQUEST = 12,
 };
 
 /* Send the hello message.

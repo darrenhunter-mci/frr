@@ -388,32 +388,11 @@ static void nhrp_apply_pim_nbma_state(const struct pim_nbma_if_state *state)
 	       state->enabled ? "enabled" : "disabled");
 }
 
-/* pimd asked us to resolve a multicast (S,G) source so a spoke-to-spoke
- * shortcut can form (the multicast-only flow has no unicast packet to drive
- * the usual traffic-indication/redirect path).  Kick an NHRP Resolution
- * Request for the source's protocol address.  nhrp_shortcut_initiate is a
- * no-op when a shortcut for that host is already in flight or established,
- * so repeated requests (one per pimd RPF update) are harmless.
- */
-static void nhrp_apply_pim_resolve_req(const struct pim_nbma_resolve_req *req)
-{
-	union sockunion su;
-
-	memset(&su, 0, sizeof(su));
-	su.sin.sin_family = AF_INET;
-	su.sin.sin_addr = req->src;
-
-	debugf(NHRP_DEBUG_IF, "pim: resolve request for %pSU (ifindex %u)", &su,
-	       req->ifindex);
-	nhrp_shortcut_initiate(&su);
-}
-
 static int nhrp_zebra_opaque_msg_handler(ZAPI_CALLBACK_ARGS)
 {
 	struct stream *s = zclient->ibuf;
 	struct zapi_opaque_msg info;
 	struct pim_nbma_if_state state;
-	struct pim_nbma_resolve_req rreq;
 
 	if (zclient_opaque_decode(s, &info) != 0)
 		return -1;
@@ -422,10 +401,6 @@ static int nhrp_zebra_opaque_msg_handler(ZAPI_CALLBACK_ARGS)
 	case PIM_NBMA_IF_STATE_UPDATE:
 		STREAM_GET(&state, s, sizeof(state));
 		nhrp_apply_pim_nbma_state(&state);
-		break;
-	case PIM_NBMA_RESOLVE_REQUEST:
-		STREAM_GET(&rreq, s, sizeof(rreq));
-		nhrp_apply_pim_resolve_req(&rreq);
 		break;
 	default:
 		break;
@@ -457,7 +432,6 @@ static void nhrp_zebra_connected(struct zclient *zclient)
 	zclient_register_neigh(zclient, VRF_DEFAULT, AFI_IP6, true);
 
 	zclient_register_opaque(zclient, PIM_NBMA_IF_STATE_UPDATE);
-	zclient_register_opaque(zclient, PIM_NBMA_RESOLVE_REQUEST);
 	nhrp_pim_nbma_send_request_all(zclient);
 }
 

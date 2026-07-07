@@ -16,7 +16,6 @@
 #define _LIBPIM_NBMA_SYNC_H
 
 #include <stdbool.h>
-#include <netinet/in.h>
 #include "lib/if.h"
 
 #ifdef __cplusplus
@@ -32,18 +31,6 @@ struct pim_nbma_if_state {
 /* ifindex == 0 means "send UPDATE for every NBMA-enabled interface". */
 struct pim_nbma_if_state_req {
 	ifindex_t ifindex;
-};
-
-/*
- * pimd -> nhrpd: please resolve `src` (an (S,G) source protocol address)
- * reachable across the NBMA tunnel `ifindex`, so nhrpd kicks off an NHRP
- * Resolution Request and a spoke-to-spoke shortcut forms. Needed for
- * MULTICAST-ONLY flows, where no unicast data packet ever triggered the
- * traffic-indication/redirect path. IPv4 only (NHRP is v4).
- */
-struct pim_nbma_resolve_req {
-	ifindex_t ifindex;
-	struct in_addr src;
 };
 
 #ifdef __cplusplus
