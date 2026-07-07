@@ -38,6 +38,14 @@ static struct event *netlink_mcast_log_thread;
 /* Inner IP decoded from an NFLOG payload; passed through the
  * replication walk so every per-NBMA decision uses the same parse.
  */
+/* A single shortcut peer can hold several NHRP cache entries at once -- its
+ * tunnel /32 AND one per LAN prefix behind it -- all pointing at the same NBMA.
+ * The dynamic-map replication walk (nhrp_cache_foreach) visits every entry, so
+ * without dedup it replicates one multicast packet to that NBMA once per entry
+ * and the receiver sees N copies (observed 2x: tunnel + LAN host). Track the
+ * NBMAs already sent-to for THIS packet and skip repeats. */
+#define NHRP_MCAST_DEDUP_MAX 128
+
 struct mcast_ctx {
 	struct interface *ifp;
 	struct zbuf *pkt;
@@ -48,7 +56,27 @@ struct mcast_ctx {
 	union sockunion inner_dst;
 	uint8_t inner_proto;
 	uint8_t inner_ihl_bytes;
+	/* Per-packet NBMA dedup (see NHRP_MCAST_DEDUP_MAX). Zeroed with the
+	 * whole ctx per NFLOG message. Overflow falls back to sending --
+	 * correctness over dedup on pathologically large fan-outs. */
+	union sockunion sent_nbma[NHRP_MCAST_DEDUP_MAX];
+	uint16_t nsent;
 };
+
+/* Returns true if this packet was already replicated to nbma (caller should
+ * skip); otherwise records nbma and returns false. */
+static bool nhrp_mcast_already_sent(struct mcast_ctx *ctx,
+				    union sockunion *nbma)
+{
+	uint16_t i;
+
+	for (i = 0; i < ctx->nsent; i++)
+		if (sockunion_same(&ctx->sent_nbma[i], nbma))
+			return true;
+	if (ctx->nsent < NHRP_MCAST_DEDUP_MAX)
+		ctx->sent_nbma[ctx->nsent++] = *nbma;
+	return false;
+}
 
 /* Parse the inner IPv4 header from an NFLOG payload. Sets ctx->parsed
  * true iff the header was structurally valid. The zbuf cursor is not
@@ -121,13 +149,18 @@ static void nhrp_multicast_send(struct nhrp_peer *p, struct zbuf *zb)
 }
 
 static void nhrp_multicast_forward_nbma(union sockunion *nbma_addr,
-					struct interface *ifp, struct zbuf *pkt)
+					struct mcast_ctx *ctx)
 {
-	struct nhrp_peer *p = nhrp_peer_get(ifp, nbma_addr);
+	struct nhrp_peer *p;
 
+	/* Replicate to each NBMA at most once per packet (see mcast_ctx). */
+	if (nhrp_mcast_already_sent(ctx, nbma_addr))
+		return;
+
+	p = nhrp_peer_get(ctx->ifp, nbma_addr);
 	if (p && p->online) {
 		/* Send packet */
-		nhrp_multicast_send(p, pkt);
+		nhrp_multicast_send(p, ctx->pkt);
 	}
 	nhrp_peer_unref(p);
 }
@@ -170,7 +203,7 @@ static void nhrp_multicast_forward_cache(struct nhrp_cache *c, void *pctx)
 		}
 	}
 
-	nhrp_multicast_forward_nbma(peer_nbma, ctx->ifp, ctx->pkt);
+	nhrp_multicast_forward_nbma(peer_nbma, ctx);
 }
 
 /* RFC 1071 Internet checksum over `buf`, returning 1 iff the buffer's
@@ -345,7 +378,7 @@ static void nhrp_multicast_forward(struct nhrp_multicast *mcast, void *pctx)
 	}
 
 	/* Fixed IP Address */
-	nhrp_multicast_forward_nbma(&mcast->nbma_addr, ctx->ifp, ctx->pkt);
+	nhrp_multicast_forward_nbma(&mcast->nbma_addr, ctx);
 }
 
 static void netlink_mcast_log_handler(struct nlmsghdr *msg, struct zbuf *zb)
