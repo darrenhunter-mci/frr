@@ -130,20 +130,25 @@ enum pim_rpf_result pim_rpf_update(struct pim_instance *pim,
 	 * thing that kicks resolution for a multicast-only flow. nhrpd dedups
 	 * in-flight/established shortcuts, so re-firing per RPF update is safe.
 	 *
-	 * Gate on !I_am_RP: the RP (the DMVPN hub) stays on the shared tree
-	 * (spt-switchover infinity) and does NOT want a source SPT -- and its
-	 * own resolution would install a recursive source /32 that shadows the
-	 * BGP route and breaks hub-relay RPF (the reliable fallback). Confining
-	 * the trigger to non-RP receivers lets spokes bootstrap the direct path
-	 * while the hub-relay stays intact; A3's spoke<->spoke PIM adjacency then
-	 * makes the resolved /32 RPF-usable so the trigger self-terminates once
-	 * the SPT switches over.
+	 * Two-part gate:
+	 *  - !I_am_RP: the RP (DMVPN hub) never wants a source SPT; its own
+	 *    resolution would install a recursive /32 shadowing the BGP route and
+	 *    break hub-relay RPF.
+	 *  - switchover != PIM_SPT_INFINITY: a node pinned to the shared tree
+	 *    (`spt-switchover infinity-and-beyond`, i.e. plain hub-relay with no
+	 *    spoke<->spoke adjacency configured) must NOT trigger either -- the
+	 *    resolved /32 would be recursive-and-unresolvable there and break the
+	 *    receiver's OWN RPF. Only a spoke that has dropped the pin (Plan A's
+	 *    A5, paired with A3's dynamic-map adjacency) both wants the SPT and can
+	 *    resolve the /32, so only it triggers. The trigger then self-terminates
+	 *    once the direct SPT switches over.
 	 */
 	if (!pim_addr_is_any(up->sg.src) && rpf->source_nexthop.interface) {
 		struct pim_interface *rpf_ifp = rpf->source_nexthop.interface->info;
 
 		if (rpf_ifp && rpf_ifp->pim_nbma_enable &&
-		    !I_am_RP(up->pim, up->sg.grp))
+		    !I_am_RP(pim, up->sg.grp) &&
+		    pim->spt.switchover != PIM_SPT_INFINITY)
 			pim_nbma_send_resolve(rpf->source_nexthop.interface, up->sg.src);
 	}
 #endif /* PIM_IPV == 4 */
