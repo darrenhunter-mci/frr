@@ -112,6 +112,36 @@ enum pim_rpf_result pim_rpf_update(struct pim_instance *pim,
 
 	pim_nht_find_or_track(pim, up->upstream_addr, up, NULL, NULL);
 	if (!pim_nht_lookup_ecmp(pim, &rpf->source_nexthop, src, &grp, neigh_needed)) {
+#if PIM_IPV == 4
+		/* A2 (multicast-only shortcut bootstrap), failure-path trigger.
+		 * The neigh-REQUIRING lookup above just failed — for a pure multicast
+		 * receiver this is normal: the source's RPF next-hop (a hub BGP
+		 * next-hop-self address) is NOT yet a PIM neighbor because no
+		 * spoke-to-spoke shortcut exists, and a pure receiver never sends
+		 * unicast toward the source to bootstrap one. Retry WITHOUT the
+		 * neighbor requirement; if that lands on an `ip pim nbma` interface and
+		 * we're a spoke that wants the SPT (!I_am_RP, spt != INFINITY), ask
+		 * nhrpd to resolve the source so a real shortcut + PIM adjacency form.
+		 * The NEXT rpf update then finds the peer as a neighbor and the
+		 * neigh-requiring lookup succeeds -> direct SPT. nhrpd dedups in-flight
+		 * shortcuts so re-firing per failed update is safe, and this self-
+		 * terminates once the adjacency is up. (The post-success trigger below
+		 * is unreachable for a pure receiver precisely because of this failure.)
+		 */
+		if (!pim_addr_is_any(up->sg.src) && !I_am_RP(pim, up->sg.grp) &&
+		    pim->spt.switchover != PIM_SPT_INFINITY) {
+			struct pim_nexthop nnh;
+
+			memset(&nnh, 0, sizeof(nnh));
+			if (pim_nht_lookup_ecmp(pim, &nnh, src, &grp, false) &&
+			    nnh.interface && nnh.interface->info &&
+			    ((struct pim_interface *)nnh.interface->info)->pim_nbma_enable) {
+				zlog_notice("A2DIAG FIRING-on-fail resolve %pPAs on %s",
+					    &up->sg.src, nnh.interface->name);
+				pim_nbma_send_resolve(nnh.interface, up->sg.src);
+			}
+		}
+#endif /* PIM_IPV == 4 */
 		/* Route is Deleted in Zebra, reset the stored NH data */
 		pim_upstream_rpf_clear(pim, up);
 		pim_rpf_cost_change(pim, up, saved_mrib_route_metric);
