@@ -136,8 +136,9 @@ enum pim_rpf_result pim_rpf_update(struct pim_instance *pim,
 			if (pim_nht_lookup_ecmp(pim, &nnh, src, &grp, false) &&
 			    nnh.interface && nnh.interface->info &&
 			    ((struct pim_interface *)nnh.interface->info)->pim_nbma_enable) {
-				zlog_notice("A2DIAG FIRING-on-fail resolve %pPAs on %s",
-					    &up->sg.src, nnh.interface->name);
+				if (PIM_DEBUG_ZEBRA)
+					zlog_debug("%s: multicast-only shortcut: resolving %pPAs on %s (RPF-failure path)",
+						   __func__, &up->sg.src, nnh.interface->name);
 				pim_nbma_send_resolve(nnh.interface, up->sg.src);
 			}
 		}
@@ -176,19 +177,12 @@ enum pim_rpf_result pim_rpf_update(struct pim_instance *pim,
 	if (!pim_addr_is_any(up->sg.src) && rpf->source_nexthop.interface) {
 		struct pim_interface *rpf_ifp = rpf->source_nexthop.interface->info;
 
-		/* A2DIAG: temporary — log why the multicast-shortcut trigger does or
-		 * doesn't fire. Remove once the pure-receiver path is validated. */
-		zlog_notice("A2DIAG (S,G)=%s rpf_if=%s nbma=%d I_am_RP=%d spt=%d",
-			    up->sg_str, rpf->source_nexthop.interface->name,
-			    rpf_ifp ? (int)rpf_ifp->pim_nbma_enable : -1,
-			    I_am_RP(pim, up->sg.grp) ? 1 : 0,
-			    (int)pim->spt.switchover);
-
 		if (rpf_ifp && rpf_ifp->pim_nbma_enable &&
 		    !I_am_RP(pim, up->sg.grp) &&
 		    pim->spt.switchover != PIM_SPT_INFINITY) {
-			zlog_notice("A2DIAG FIRING resolve for %pPAs on %s",
-				    &up->sg.src, rpf->source_nexthop.interface->name);
+			if (PIM_DEBUG_ZEBRA)
+				zlog_debug("%s: multicast-only shortcut: resolving %pPAs on %s",
+					   __func__, &up->sg.src, rpf->source_nexthop.interface->name);
 			pim_nbma_send_resolve(rpf->source_nexthop.interface, up->sg.src);
 		}
 	}
